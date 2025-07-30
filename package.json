@@ -1,0 +1,23 @@
+{
+  "name": "sync-engine",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "bun install && bunx prisma generate",
+    "start": "bun run index.ts",
+    "dev": "bun --watch index.ts",
+    "prisma:generate": "bunx prisma generate",
+    "prisma:migrate": "bunx prisma migrate deploy"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.13.0",
+    "prisma": "^6.13.0"
+  }
+}

@@ -1,3 +1,6 @@
+import { PrismaClient } from "./generated/prisma";
+const prisma = new PrismaClient()
+
 const server = Bun.serve({
 	port: 3001,
 	fetch(req, server) {
@@ -7,10 +10,8 @@ const server = Bun.serve({
 			if (success) return; // connection upgraded, do not respond
 			return new Response("WebSocket upgrade failed", { status: 400 });
 		}
-
 		return new Response("WebSocket server only", { status: 404 });
 	},
-
 	websocket: {
 		open(ws) {
 			console.log("WebSocket client connected");
@@ -22,32 +23,135 @@ const server = Bun.serve({
 				})
 			);
 		},
+		message: async (ws, message) => {
+			// Helper functions defined at the top level of message handler
+			async function createConversation(data: any) {
+				console.log("@@CREATING CONVERSATION", data)
+				try {
+					const savedConversation = await prisma.conversation.create({
+						data: {
+							id: data.id,
+							title: data.title,
+						},
+					});
 
-		message(ws, message) {
+					const firstMessage = data.messages[0]
+					if (firstMessage) {
+						const savedMessage = await prisma.message.create({
+							data: {
+								id: firstMessage.id,
+								text: firstMessage.text,
+								sender: firstMessage.sender,
+								conversationId: savedConversation.id
+							}
+						})
+						const syncedMessage = {
+							id: savedMessage.id,
+							conversationId: savedConversation.id,
+							status: "synced"
+						}
+						if (ws.readyState === WebSocket.OPEN) {
+							ws.send(JSON.stringify({
+								type: "MESSAGE_SYNC_RESPONSE",
+								data: syncedMessage
+							}))
+						}
+					}
+					const synced = {
+						id: savedConversation.id,
+						status: 'synced'
+					};
+					console.log("@@SYNCED", synced)
+					const response = JSON.stringify({ type: "CREATE_CONVERSATION_RESPONSE", data: synced });
+					console.log("@@SENDING RESPONSE:", response);
+					if (ws.readyState === WebSocket.OPEN) {
+						ws.send(response);
+						console.log("@@RESPONSE SENT");
+					} else {
+						console.log("@@WEBSOCKET CLOSED, CANNOT SEND RESPONSE");
+					}
+				} catch (error) {
+					console.error(`Error saving item:${JSON.stringify(data)}`, error);
+					const synced = {
+						id: data.id,
+						status: 'error'
+					};
+					const errorResponse = JSON.stringify({ type: "CREATE_CONVERSATION_RESPONSE", data: synced });
+					console.log("@@SENDING ERROR RESPONSE:", errorResponse);
+					if (ws.readyState === WebSocket.OPEN) {
+						ws.send(errorResponse);
+					}
+				}
+			}
+
+			async function syncMessage(data: any) {
+				console.log("@@SYNCING MESSAGE", data)
+
+				try {
+					const savedMessage = await prisma.message.create({
+						data: {
+							id: data.id,
+							conversationId: data.conversationId,
+							sender: data.sender,
+							text: data.text
+						}
+					})
+					const syncedMessage = {
+						id: savedMessage.id,
+						conversationId: savedMessage.conversationId,
+						status: "synced"
+					}
+					if (ws.readyState === WebSocket.OPEN) {
+						ws.send(JSON.stringify({ type: "MESSAGE_SYNC_RESPONSE", data: syncedMessage }));
+					}
+
+				} catch (error) {
+					console.error(`Error saving item:${JSON.stringify(data)}`, error);
+					const synced = {
+						id: data.id,
+						status: 'error'
+					};
+					const errorResponse = JSON.stringify({ type: "MESSAGE_SYNC_RESPONSE", data: synced });
+					console.log("@@SENDING ERROR RESPONSE:", errorResponse);
+					if (ws.readyState === WebSocket.OPEN) {
+						ws.send(errorResponse);
+					}
+
+				}
+			}
+
+			function sendError(msg: string) {
+				if (ws.readyState === WebSocket.OPEN) {
+					ws.send(JSON.stringify({ type: "ERROR", message: msg }));
+				}
+			}
+
 			try {
 				const parsed = JSON.parse(message.toString());
 				console.log("Received:", parsed);
 
 				switch (parsed.type) {
 					case "MESSAGE_SYNC_REQUEST":
-						return syncMessage(parsed.data);
+						syncMessage(parsed.data).catch(err => {
+							console.error("Error in syncMessage:", err);
+							sendError("Message sync failed");
+						});
+						break;
+					case "CREATE_CONVERSATION_REQUEST":
+						createConversation(parsed.data).catch(err => {
+							console.error("Error in createConversation:", err);
+							sendError("Conversation creation failed");
+						});
+						break;
 					default:
-						return sendError("Invalid type");
-				}
-
-				function syncMessage(data: any) {
-					const synced = { ...data, syncStatus: "synced" };
-					ws.send(JSON.stringify({ type: "MESSAGE_SYNC_RESPONSE", data: synced }));
-				}
-
-				function sendError(msg: string) {
-					ws.send(JSON.stringify({ type: "ERROR", message: msg }));
+						sendError("Invalid type");
+						break;
 				}
 			} catch (err) {
-				ws.send(JSON.stringify({ type: "ERROR", message: "Invalid message format" }));
+				console.error("Message parsing error:", err);
+				sendError("Invalid message format");
 			}
 		},
-
 		close(ws, code, reason) {
 			console.log("WebSocket disconnected", code, reason);
 		},

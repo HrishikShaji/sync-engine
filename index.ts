@@ -35,28 +35,6 @@ const server = Bun.serve({
 						},
 					});
 
-					const firstMessage = data.messages[0]
-					if (firstMessage) {
-						const savedMessage = await prisma.message.create({
-							data: {
-								id: firstMessage.id,
-								text: firstMessage.text,
-								sender: firstMessage.sender,
-								conversationId: savedConversation.id
-							}
-						})
-						const syncedMessage = {
-							id: savedMessage.id,
-							conversationId: savedConversation.id,
-							status: "synced"
-						}
-						if (ws.readyState === WebSocket.OPEN) {
-							ws.send(JSON.stringify({
-								type: "MESSAGE_SYNC_RESPONSE",
-								data: syncedMessage
-							}))
-						}
-					}
 					const synced = {
 						id: savedConversation.id,
 						status: 'synced'
@@ -88,6 +66,26 @@ const server = Bun.serve({
 				console.log("@@SYNCING MESSAGE", data)
 
 				try {
+					const conversationExists = await prisma.conversation.findUnique({
+						where: {
+							id: data.conversationId
+						}
+					})
+
+					if (!conversationExists) {
+						const synced = {
+							id: data.id,
+							conversationId: data.conversationId,
+							status: 'error'
+						};
+						const errorResponse = JSON.stringify({ type: "MESSAGE_SYNC_RESPONSE", data: synced });
+						if (ws.readyState === WebSocket.OPEN) {
+							ws.send(errorResponse);
+							return;
+						}
+
+					}
+
 					const savedMessage = await prisma.message.create({
 						data: {
 							id: data.id,
@@ -126,6 +124,12 @@ const server = Bun.serve({
 				}
 			}
 
+			function sendStatus() {
+				if (ws.readyState === WebSocket.OPEN) {
+					ws.send(JSON.stringify({ type: "RECEIVED_SUCCESS", message: "shaji" }))
+				}
+			}
+
 			try {
 				const parsed = JSON.parse(message.toString());
 				console.log("Received:", parsed);
@@ -142,6 +146,9 @@ const server = Bun.serve({
 							console.error("Error in createConversation:", err);
 							sendError("Conversation creation failed");
 						});
+						break;
+					case "DB_CHANGE":
+						sendStatus();
 						break;
 					default:
 						sendError("Invalid type");

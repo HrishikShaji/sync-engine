@@ -17,6 +17,7 @@ datasource db {
 model Conversation {
   id        String    @id
   title     String
+  initialPrompt String
   messages  Message[]
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
